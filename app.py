@@ -14,12 +14,16 @@ app.secret_key = os.getenv("FLASK_SECRET_KEY", "change-this-secret-key")
 
 DB_CONFIG = {
     "host": os.getenv("DB_HOST"),
+    "port": int(os.getenv("DB_PORT", "3306")),
     "user": os.getenv("DB_USER"),
     "password": os.getenv("DB_PASSWORD"),
     "database": os.getenv("DB_NAME"),
 }
 
-
+if os.getenv("DB_SSL_CA"):
+    DB_CONFIG["ssl_ca"] = os.getenv("DB_SSL_CA")
+    DB_CONFIG["ssl_verify_cert"] = True
+    DB_CONFIG["ssl_verify_identity"] = True
 def get_connection():
     return mysql.connector.connect(**DB_CONFIG)
 
