@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+
+{% block title %}
+Add Subject | SRMS
+{% endblock %}
+
+{% block page_title %}
+Add Subject
+{% endblock %}
+
+{% block content %}
+
+<div class="form-card">
+
+    <div class="form-header">
+
+        <h2>Add New Subject</h2>
+
+        <p>
+            Enter the subject details.
+        </p>
+
+    </div>
+
+
+    <form method="POST" class="data-form">
+
+        <div class="form-grid">
+
+            <div class="form-group">
+
+                <label>Subject Name</label>
+
+                <input
+                    type="text"
+                    name="subject_name"
+                    placeholder="Example: Machine Learning"
+                    required
+                >
+
+            </div>
+
+
+            <div class="form-group">
+
+                <label>Department</label>
+
+                <input
+                    type="text"
+                    name="department"
+                    placeholder="Example: AI & DS"
+                    required
+                >
+
+            </div>
+
+
+            <div class="form-group">
+
+                <label>Semester</label>
+
+                <input
+                    type="number"
+                    name="semester"
+                    min="1"
+                    max="8"
+                    placeholder="Example: 7"
+                    required
+                >
+
+            </div>
+
+        </div>
+
+
+        <div class="form-actions">
+
+            <a
+                href="{{ url_for('subjects') }}"
+                class="secondary-button"
+            >
+                Cancel
+            </a>
+
+            <button type="submit" class="primary-button">
+                Add Subject
+            </button>
+
+        </div>
+
+    </form>
+
+</div>
+
+{% endblock %}

@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>
+        {% block title %}Student Result Management System{% endblock %}
+    </title>
+
+    <link
+        rel="stylesheet"
+        href="{{ url_for('static', filename='css/style.css') }}"
+    >
+
+</head>
+
+<body>
+
+<div class="app-layout">
+
+    <aside class="sidebar">
+
+        <div class="brand">
+
+            <div class="brand-icon">🎓</div>
+
+            <div>
+                <h2>SRMS</h2>
+                <span>Management System</span>
+            </div>
+
+        </div>
+
+        <nav class="sidebar-nav">
+
+            <a href="{{ url_for('dashboard') }}" class="nav-item">
+                <span>📊</span>
+                Dashboard
+            </a>
+
+            <a href="{{ url_for('students') }}" class="nav-item">
+                <span>👨‍🎓</span>
+                Students
+            </a>
+
+            <a href="{{ url_for('subjects') }}" class="nav-item">
+                <span>📚</span>
+                Subjects
+            </a>
+
+            <a href="{{ url_for('marks') }}" class="nav-item">
+                <span>📝</span>
+                Marks
+            </a>
+
+            <a href="{{ url_for('attendance') }}" class="nav-item">
+                <span>📅</span>
+                Attendance
+            </a>
+
+            <a href="{{ url_for('results') }}" class="nav-item">
+                <span>📋</span>
+                Results
+            </a>
+
+        </nav>
+
+        <div class="sidebar-bottom">
+
+            <div class="nav-item admin-item">
+                <span>⚙️</span>
+                Admin
+            </div>
+
+            <a href="{{ url_for('logout') }}" class="nav-item logout">
+                <span>🚪</span>
+                Logout
+            </a>
+
+        </div>
+
+    </aside>
+
+
+    <main class="main-content">
+
+        <header class="topbar">
+
+            <div>
+                <h1>
+                    {% block page_title %}
+                    Dashboard
+                    {% endblock %}
+                </h1>
+
+                <p>
+                    Student Result Management System
+                </p>
+            </div>
+
+            <div class="admin-profile">
+
+                <div class="profile-icon">
+                    👤
+                </div>
+
+                <div>
+                    <strong>
+                        {{ session.get("username", "Admin") }}
+                    </strong>
+
+                    <small>
+                        Administrator
+                    </small>
+                </div>
+
+            </div>
+
+        </header>
+
+
+        <section class="content">
+
+            {% block content %}
+            {% endblock %}
+
+        </section>
+
+    </main>
+
+</div>
+
+<script src="{{ url_for('static', filename='js/script.js') }}"></script>
+
+</body>
+
+</html>

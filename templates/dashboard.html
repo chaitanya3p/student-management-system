@@ -1,0 +1,142 @@
+{% extends "base.html" %}
+
+{% block title %}
+Dashboard | SRMS
+{% endblock %}
+
+{% block page_title %}
+Dashboard
+{% endblock %}
+
+{% block content %}
+
+<div class="welcome-section">
+
+    <div>
+        <h2>Welcome back, {{ username }} 👋</h2>
+
+        <p>
+            Here's what's happening in your system today.
+        </p>
+    </div>
+
+</div>
+
+
+<div class="stats-grid">
+
+    <div class="stat-card">
+        <div class="stat-icon">👨‍🎓</div>
+
+        <div>
+            <span>Total Students</span>
+            <h2>{{ student_count }}</h2>
+        </div>
+    </div>
+
+
+    <div class="stat-card">
+        <div class="stat-icon">📚</div>
+
+        <div>
+            <span>Total Subjects</span>
+            <h2>{{ subject_count }}</h2>
+        </div>
+    </div>
+
+
+    <div class="stat-card">
+        <div class="stat-icon">📝</div>
+
+        <div>
+            <span>Marks Records</span>
+            <h2>{{ marks_count }}</h2>
+        </div>
+    </div>
+
+
+    <div class="stat-card">
+        <div class="stat-icon">📅</div>
+
+        <div>
+            <span>Attendance Records</span>
+            <h2>{{ attendance_count }}</h2>
+        </div>
+    </div>
+
+</div>
+
+
+<div class="section-header">
+
+    <div>
+        <h2>Quick Actions</h2>
+
+        <p>
+            Manage your student records quickly.
+        </p>
+    </div>
+
+</div>
+
+
+<div class="quick-actions">
+
+    <a href="{{ url_for('students') }}" class="action-card">
+
+        <div class="action-icon">👨‍🎓</div>
+
+        <div>
+            <h3>Students</h3>
+            <p>Manage student records</p>
+        </div>
+
+        <span class="arrow">→</span>
+
+    </a>
+
+
+    <a href="{{ url_for('subjects') }}" class="action-card">
+
+        <div class="action-icon">📚</div>
+
+        <div>
+            <h3>Subjects</h3>
+            <p>Manage subjects</p>
+        </div>
+
+        <span class="arrow">→</span>
+
+    </a>
+
+
+    <a href="{{ url_for('marks') }}" class="action-card">
+
+        <div class="action-icon">📝</div>
+
+        <div>
+            <h3>Marks</h3>
+            <p>Manage student marks</p>
+        </div>
+
+        <span class="arrow">→</span>
+
+    </a>
+
+
+    <a href="{{ url_for('results') }}" class="action-card">
+
+        <div class="action-icon">📋</div>
+
+        <div>
+            <h3>Results</h3>
+            <p>View student results</p>
+        </div>
+
+        <span class="arrow">→</span>
+
+    </a>
+
+</div>
+
+{% endblock %}

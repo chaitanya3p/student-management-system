@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+
+{% block title %}
+Add Marks | SRMS
+{% endblock %}
+
+{% block page_title %}
+Add Marks
+{% endblock %}
+
+{% block content %}
+
+<div class="form-card">
+
+    <div class="form-header">
+
+        <h2>Add Student Marks</h2>
+
+        <p>
+            Add or update marks for a student.
+        </p>
+
+    </div>
+
+
+    <form method="POST" class="data-form">
+
+        <div class="form-grid">
+
+            <div class="form-group">
+
+                <label>Student</label>
+
+                <select name="student_id" required>
+
+                    <option value="">
+                        Select Student
+                    </option>
+
+                    {% for student in students %}
+
+                    <option value="{{ student.student_id }}">
+                        {{ student.name }}
+                    </option>
+
+                    {% endfor %}
+
+                </select>
+
+            </div>
+
+
+            <div class="form-group">
+
+                <label>Subject</label>
+
+                <select name="subject_id" required>
+
+                    <option value="">
+                        Select Subject
+                    </option>
+
+                    {% for subject in subjects %}
+
+                    <option value="{{ subject.subject_id }}">
+                        {{ subject.subject_name }}
+                    </option>
+
+                    {% endfor %}
+
+                </select>
+
+            </div>
+
+
+            <div class="form-group">
+
+                <label>Marks</label>
+
+                <input
+                    type="number"
+                    name="marks"
+                    min="0"
+                    max="100"
+                    placeholder="Enter marks"
+                    required
+                >
+
+            </div>
+
+        </div>
+
+
+        <div class="form-actions">
+
+            <a
+                href="{{ url_for('marks') }}"
+                class="secondary-button"
+            >
+                Cancel
+            </a>
+
+            <button type="submit" class="primary-button">
+                Save Marks
+            </button>
+
+        </div>
+
+    </form>
+
+</div>
+
+{% endblock %}

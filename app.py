@@ -1,12 +1,15 @@
 import os
 
 import mysql.connector
-from mysql.connector import Error
+from flask import Flask, render_template, request, redirect, url_for, session
 from dotenv import load_dotenv
 from werkzeug.security import check_password_hash
 
 
 load_dotenv()
+
+app = Flask(__name__)
+app.secret_key = os.getenv("FLASK_SECRET_KEY", "change-this-secret-key")
 
 
 DB_CONFIG = {
@@ -17,1271 +20,1203 @@ DB_CONFIG = {
 }
 
 
-def get_student_id():
-    try:
-        student_id = int(input("Enter student ID: ").strip())
-
-        if student_id <= 0:
-            raise ValueError
-
-        return student_id
-
-    except ValueError:
-        print("Student ID must be a positive whole number.")
-        return None
+def get_connection():
+    return mysql.connector.connect(**DB_CONFIG)
 
 
-def get_subject_id():
-    try:
-        subject_id = int(input("Enter subject ID: ").strip())
-
-        if subject_id <= 0:
-            raise ValueError
-
-        return subject_id
-
-    except ValueError:
-        print("Subject ID must be a positive whole number.")
-        return None
+def login_required():
+    return session.get("admin_logged_in")
 
 
-def admin_login(connection):
-    username = input("Enter admin username: ").strip()
-    password = input("Enter admin password: ").strip()
+# =========================
+# LOGIN
+# =========================
 
-    query = """
-        SELECT password
-        FROM admins
-        WHERE username = %s
-    """
-
-    cursor = None
-
-    try:
-        cursor = connection.cursor()
-
-        cursor.execute(
-            query,
-            (username,)
-        )
-
-        admin = cursor.fetchone()
-
-        if admin is None:
-            print("Invalid username or password.")
-            return False
-
-        stored_password = admin[0]
-
-        if not check_password_hash(stored_password, password):
-            print("Invalid username or password.")
-            return False
-
-        print("Login successful.")
-        return True
-
-    except Error as error:
-        print(f"Login error: {error}")
-        return False
-
-    finally:
-        if cursor is not None:
-            cursor.close()
+@app.route("/")
+def home():
+    return redirect(url_for("login"))
 
 
-def add_student(connection):
-    name = input("Enter name: ").strip()
-    email = input("Enter email: ").strip()
-    phone = input("Enter phone (optional): ").strip() or None
-    department = input("Enter department (optional): ").strip() or None
+@app.route("/login", methods=["GET", "POST"])
+def login():
 
-    if not name or not email:
-        print("Name and email are required.")
-        return
+    if request.method == "POST":
 
-    year_text = input("Enter year (optional): ").strip()
+        username = request.form["username"].strip()
+        password = request.form["password"].strip()
 
-    if year_text:
+        connection = None
+        cursor = None
+
         try:
-            year = int(year_text)
-        except ValueError:
-            print("Year must be a whole number.")
-            return
-    else:
-        year = None
+            connection = get_connection()
+            cursor = connection.cursor()
 
-    query = """
-        INSERT INTO students
-        (name, email, phone, department, year)
-        VALUES (%s, %s, %s, %s, %s)
-    """
+            cursor.execute(
+                "SELECT password FROM admins WHERE username = %s",
+                (username,)
+            )
 
+            admin = cursor.fetchone()
+
+            if admin and check_password_hash(admin[0], password):
+
+                session["admin_logged_in"] = True
+                session["username"] = username
+
+                return redirect(url_for("dashboard"))
+
+            return render_template(
+                "login.html",
+                error="Invalid username or password."
+            )
+
+        except mysql.connector.Error as error:
+
+            return render_template(
+                "login.html",
+                error=f"Database error: {error}"
+            )
+
+        finally:
+
+            if cursor:
+                cursor.close()
+
+            if connection:
+                connection.close()
+
+    return render_template("login.html")
+
+
+# =========================
+# DASHBOARD
+# =========================
+
+@app.route("/dashboard")
+def dashboard():
+
+    if not login_required():
+        return redirect(url_for("login"))
+
+    connection = None
     cursor = None
 
     try:
+
+        connection = get_connection()
         cursor = connection.cursor()
 
-        cursor.execute(
-            query,
-            (name, email, phone, department, year)
+        cursor.execute("SELECT COUNT(*) FROM students")
+        student_count = cursor.fetchone()[0]
+
+        cursor.execute("SELECT COUNT(*) FROM subjects")
+        subject_count = cursor.fetchone()[0]
+
+        cursor.execute("SELECT COUNT(*) FROM marks")
+        marks_count = cursor.fetchone()[0]
+
+        cursor.execute("SELECT COUNT(*) FROM attendance")
+        attendance_count = cursor.fetchone()[0]
+
+        return render_template(
+            "dashboard.html",
+            student_count=student_count,
+            subject_count=subject_count,
+            marks_count=marks_count,
+            attendance_count=attendance_count,
+            username=session.get("username")
         )
 
-        connection.commit()
+    except mysql.connector.Error as error:
 
-        print("Student added successfully.")
-
-    except Error as error:
-        connection.rollback()
-        print(f"Could not add student: {error}")
+        return f"Database error: {error}"
 
     finally:
-        if cursor is not None:
+
+        if cursor:
             cursor.close()
 
+        if connection:
+            connection.close()
 
-def view_all_students(connection):
-    query = """
-        SELECT student_id, name, email, phone, department, year
-        FROM students
-        ORDER BY student_id
-    """
 
+# ============================================================
+# STUDENTS
+# ============================================================
+
+@app.route("/students")
+def students():
+
+    if not login_required():
+        return redirect(url_for("login"))
+
+    connection = None
     cursor = None
 
     try:
-        cursor = connection.cursor()
 
-        cursor.execute(query)
+        connection = get_connection()
+        cursor = connection.cursor(dictionary=True)
 
-        students = cursor.fetchall()
+        search = request.args.get("search", "").strip()
 
-        if not students:
-            print("No students found.")
-            return
+        if search:
 
-        print("\nID | Name | Email | Phone | Department | Year")
-        print("-" * 75)
+            search_value = f"%{search}%"
 
-        for student in students:
-            print(
-                " | ".join(
-                    str(value) if value is not None else ""
-                    for value in student
+            cursor.execute(
+                """
+                SELECT *
+                FROM students
+                WHERE name LIKE %s
+                   OR email LIKE %s
+                   OR department LIKE %s
+                   OR phone LIKE %s
+                ORDER BY student_id
+                """,
+                (
+                    search_value,
+                    search_value,
+                    search_value,
+                    search_value
                 )
             )
 
-    except Error as error:
-        print(f"Could not retrieve students: {error}")
+        else:
+
+            cursor.execute(
+                """
+                SELECT *
+                FROM students
+                ORDER BY student_id
+                """
+            )
+
+        student_list = cursor.fetchall()
+
+        return render_template(
+            "students.html",
+            students=student_list,
+            search=search,
+            username=session.get("username")
+        )
+
+    except mysql.connector.Error as error:
+
+        return f"Database error: {error}"
 
     finally:
-        if cursor is not None:
+
+        if cursor:
             cursor.close()
 
+        if connection:
+            connection.close()
 
-def search_student(connection):
-    student_id = get_student_id()
 
-    if student_id is None:
-        return
+# -------------------------
+# ADD STUDENT
+# -------------------------
 
-    query = """
-        SELECT student_id, name, email, phone, department, year
-        FROM students
-        WHERE student_id = %s
-    """
+@app.route("/students/add", methods=["GET", "POST"])
+def add_student():
 
+    if not login_required():
+        return redirect(url_for("login"))
+
+    if request.method == "POST":
+
+        name = request.form["name"].strip()
+        email = request.form["email"].strip()
+        phone = request.form["phone"].strip()
+        department = request.form["department"].strip()
+        year = request.form["year"].strip()
+
+        connection = None
+        cursor = None
+
+        try:
+
+            connection = get_connection()
+            cursor = connection.cursor()
+
+            cursor.execute(
+                """
+                INSERT INTO students
+                (name, email, phone, department, year)
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (
+                    name,
+                    email,
+                    phone,
+                    department,
+                    year
+                )
+            )
+
+            connection.commit()
+
+            return redirect(url_for("students"))
+
+        except mysql.connector.Error as error:
+
+            return f"Database error: {error}"
+
+        finally:
+
+            if cursor:
+                cursor.close()
+
+            if connection:
+                connection.close()
+
+    return render_template("add_student.html")
+
+
+# -------------------------
+# EDIT STUDENT
+# -------------------------
+
+@app.route("/students/edit/<int:student_id>", methods=["GET", "POST"])
+def edit_student(student_id):
+
+    if not login_required():
+        return redirect(url_for("login"))
+
+    connection = None
     cursor = None
 
     try:
-        cursor = connection.cursor()
+
+        connection = get_connection()
+        cursor = connection.cursor(dictionary=True)
+
+        if request.method == "POST":
+
+            name = request.form["name"].strip()
+            email = request.form["email"].strip()
+            phone = request.form["phone"].strip()
+            department = request.form["department"].strip()
+            year = request.form["year"].strip()
+
+            cursor.execute(
+                """
+                UPDATE students
+                SET name = %s,
+                    email = %s,
+                    phone = %s,
+                    department = %s,
+                    year = %s
+                WHERE student_id = %s
+                """,
+                (
+                    name,
+                    email,
+                    phone,
+                    department,
+                    year,
+                    student_id
+                )
+            )
+
+            connection.commit()
+
+            return redirect(url_for("students"))
 
         cursor.execute(
-            query,
+            """
+            SELECT *
+            FROM students
+            WHERE student_id = %s
+            """,
             (student_id,)
         )
 
         student = cursor.fetchone()
 
-        if student is None:
-            print("Student not found.")
-            return
+        if not student:
+            return "Student not found."
 
-        print("\n========== STUDENT ==========")
-        print(f"ID         : {student[0]}")
-        print(f"Name       : {student[1]}")
-        print(f"Email      : {student[2]}")
-        print(f"Phone      : {student[3] or 'Not provided'}")
-        print(f"Department : {student[4] or 'Not provided'}")
-        print(f"Year       : {student[5] or 'Not provided'}")
-        print("=============================")
-
-    except Error as error:
-        print(f"Could not search for student: {error}")
-
-    finally:
-        if cursor is not None:
-            cursor.close()
-
-
-def update_student(connection):
-    student_id = get_student_id()
-
-    if student_id is None:
-        return
-
-    name = input("Enter new name: ").strip()
-    email = input("Enter new email: ").strip()
-    phone = input("Enter new phone (optional): ").strip() or None
-    department = input("Enter new department (optional): ").strip() or None
-    year_text = input("Enter new year (optional): ").strip()
-
-    if not name or not email:
-        print("Name and email are required.")
-        return
-
-    if year_text:
-        try:
-            year = int(year_text)
-        except ValueError:
-            print("Year must be a whole number.")
-            return
-    else:
-        year = None
-
-    query = """
-        UPDATE students
-        SET name = %s,
-            email = %s,
-            phone = %s,
-            department = %s,
-            year = %s
-        WHERE student_id = %s
-    """
-
-    cursor = None
-
-    try:
-        cursor = connection.cursor()
-
-        cursor.execute(
-            query,
-            (
-                name,
-                email,
-                phone,
-                department,
-                year,
-                student_id
-            )
+        return render_template(
+            "edit_student.html",
+            student=student
         )
 
-        connection.commit()
+    except mysql.connector.Error as error:
 
-        if cursor.rowcount == 0:
-            print("Student not found.")
-        else:
-            print("Student updated successfully.")
-
-    except Error as error:
-        connection.rollback()
-        print(f"Could not update student: {error}")
+        return f"Database error: {error}"
 
     finally:
-        if cursor is not None:
+
+        if cursor:
             cursor.close()
 
+        if connection:
+            connection.close()
 
-def delete_student(connection):
-    student_id = get_student_id()
 
-    if student_id is None:
-        return
+# -------------------------
+# DELETE STUDENT
+# -------------------------
 
-    confirmation = input(
-        "Are you sure you want to delete this student? (y/n): "
-    ).strip().lower()
+@app.route("/students/delete/<int:student_id>")
+def delete_student(student_id):
 
-    if confirmation != "y":
-        print("Delete cancelled.")
-        return
+    if not login_required():
+        return redirect(url_for("login"))
 
-    query = """
-        DELETE FROM students
-        WHERE student_id = %s
-    """
-
+    connection = None
     cursor = None
 
     try:
+
+        connection = get_connection()
         cursor = connection.cursor()
 
+        # Delete related records first
         cursor.execute(
-            query,
+            "DELETE FROM marks WHERE student_id = %s",
+            (student_id,)
+        )
+
+        cursor.execute(
+            "DELETE FROM attendance WHERE student_id = %s",
+            (student_id,)
+        )
+
+        cursor.execute(
+            "DELETE FROM students WHERE student_id = %s",
             (student_id,)
         )
 
         connection.commit()
 
-        if cursor.rowcount == 0:
-            print("Student not found.")
-        else:
-            print("Student deleted successfully.")
+        return redirect(url_for("students"))
 
-    except Error as error:
+    except mysql.connector.Error as error:
+
         connection.rollback()
-        print(f"Could not delete student: {error}")
+
+        return f"Database error: {error}"
 
     finally:
-        if cursor is not None:
+
+        if cursor:
             cursor.close()
 
+        if connection:
+            connection.close()
 
-def add_subject(connection):
-    subject_name = input("Enter subject name: ").strip()
-    department = input("Enter department: ").strip()
-    semester_text = input("Enter semester: ").strip()
 
-    if not subject_name:
-        print("Subject name is required.")
-        return
+# ============================================================
+# SUBJECTS
+# ============================================================
 
-    try:
-        semester = int(semester_text)
+@app.route("/subjects")
+def subjects():
 
-        if semester <= 0:
-            raise ValueError
+    if not login_required():
+        return redirect(url_for("login"))
 
-    except ValueError:
-        print("Semester must be a positive whole number.")
-        return
-
-    query = """
-        INSERT INTO subjects
-        (subject_name, department, semester)
-        VALUES (%s, %s, %s)
-    """
-
+    connection = None
     cursor = None
 
     try:
-        cursor = connection.cursor()
+
+        connection = get_connection()
+        cursor = connection.cursor(dictionary=True)
 
         cursor.execute(
-            query,
-            (
-                subject_name,
-                department,
-                semester
-            )
+            """
+            SELECT *
+            FROM subjects
+            ORDER BY subject_id
+            """
         )
 
-        connection.commit()
+        subject_list = cursor.fetchall()
 
-        print("Subject added successfully.")
-
-    except Error as error:
-        connection.rollback()
-        print(f"Could not add subject: {error}")
-
-    finally:
-        if cursor is not None:
-            cursor.close()
-
-
-def view_all_subjects(connection):
-    query = """
-        SELECT subject_id, subject_name, department, semester
-        FROM subjects
-        ORDER BY subject_id
-    """
-
-    cursor = None
-
-    try:
-        cursor = connection.cursor()
-
-        cursor.execute(query)
-
-        subjects = cursor.fetchall()
-
-        if not subjects:
-            print("No subjects found.")
-            return
-
-        print("\nID | Subject | Department | Semester")
-        print("-" * 60)
-
-        for subject in subjects:
-            print(
-                f"{subject[0]} | "
-                f"{subject[1]} | "
-                f"{subject[2] or ''} | "
-                f"{subject[3] or ''}"
-            )
-
-    except Error as error:
-        print(f"Could not retrieve subjects: {error}")
-
-    finally:
-        if cursor is not None:
-            cursor.close()
-
-
-def update_subject(connection):
-    subject_id = get_subject_id()
-
-    if subject_id is None:
-        return
-
-    subject_name = input("Enter new subject name: ").strip()
-    department = input("Enter new department: ").strip()
-    semester_text = input("Enter new semester: ").strip()
-
-    if not subject_name:
-        print("Subject name is required.")
-        return
-
-    try:
-        semester = int(semester_text)
-
-        if semester <= 0:
-            raise ValueError
-
-    except ValueError:
-        print("Semester must be a positive whole number.")
-        return
-
-    query = """
-        UPDATE subjects
-        SET subject_name = %s,
-            department = %s,
-            semester = %s
-        WHERE subject_id = %s
-    """
-
-    cursor = None
-
-    try:
-        cursor = connection.cursor()
-
-        cursor.execute(
-            query,
-            (
-                subject_name,
-                department,
-                semester,
-                subject_id
-            )
+        return render_template(
+            "subjects.html",
+            subjects=subject_list
         )
 
-        connection.commit()
+    except mysql.connector.Error as error:
 
-        if cursor.rowcount == 0:
-            print("Subject not found.")
-        else:
-            print("Subject updated successfully.")
-
-    except Error as error:
-        connection.rollback()
-        print(f"Could not update subject: {error}")
+        return f"Database error: {error}"
 
     finally:
-        if cursor is not None:
+
+        if cursor:
             cursor.close()
 
+        if connection:
+            connection.close()
 
-def delete_subject(connection):
-    subject_id = get_subject_id()
 
-    if subject_id is None:
-        return
+# -------------------------
+# ADD SUBJECT
+# -------------------------
 
-    confirmation = input(
-        "Are you sure you want to delete this subject? (y/n): "
-    ).strip().lower()
+@app.route("/subjects/add", methods=["GET", "POST"])
+def add_subject():
 
-    if confirmation != "y":
-        print("Delete cancelled.")
-        return
+    if not login_required():
+        return redirect(url_for("login"))
 
-    query = """
-        DELETE FROM subjects
-        WHERE subject_id = %s
-    """
+    if request.method == "POST":
 
+        subject_name = request.form["subject_name"].strip()
+        department = request.form["department"].strip()
+        semester = request.form["semester"].strip()
+
+        connection = None
+        cursor = None
+
+        try:
+
+            connection = get_connection()
+            cursor = connection.cursor()
+
+            cursor.execute(
+                """
+                INSERT INTO subjects
+                (subject_name, department, semester)
+                VALUES (%s, %s, %s)
+                """,
+                (
+                    subject_name,
+                    department,
+                    semester
+                )
+            )
+
+            connection.commit()
+
+            return redirect(url_for("subjects"))
+
+        except mysql.connector.Error as error:
+
+            return f"Database error: {error}"
+
+        finally:
+
+            if cursor:
+                cursor.close()
+
+            if connection:
+                connection.close()
+
+    return render_template("add_subject.html")
+
+
+# -------------------------
+# EDIT SUBJECT
+# -------------------------
+
+@app.route("/subjects/edit/<int:subject_id>", methods=["GET", "POST"])
+def edit_subject(subject_id):
+
+    if not login_required():
+        return redirect(url_for("login"))
+
+    connection = None
     cursor = None
 
     try:
-        cursor = connection.cursor()
+
+        connection = get_connection()
+        cursor = connection.cursor(dictionary=True)
+
+        if request.method == "POST":
+
+            subject_name = request.form["subject_name"].strip()
+            department = request.form["department"].strip()
+            semester = request.form["semester"].strip()
+
+            cursor.execute(
+                """
+                UPDATE subjects
+                SET subject_name = %s,
+                    department = %s,
+                    semester = %s
+                WHERE subject_id = %s
+                """,
+                (
+                    subject_name,
+                    department,
+                    semester,
+                    subject_id
+                )
+            )
+
+            connection.commit()
+
+            return redirect(url_for("subjects"))
 
         cursor.execute(
-            query,
+            """
+            SELECT *
+            FROM subjects
+            WHERE subject_id = %s
+            """,
+            (subject_id,)
+        )
+
+        subject = cursor.fetchone()
+
+        if not subject:
+            return "Subject not found."
+
+        return render_template(
+            "edit_subject.html",
+            subject=subject
+        )
+
+    except mysql.connector.Error as error:
+
+        return f"Database error: {error}"
+
+    finally:
+
+        if cursor:
+            cursor.close()
+
+        if connection:
+            connection.close()
+
+
+# -------------------------
+# DELETE SUBJECT
+# -------------------------
+
+@app.route("/subjects/delete/<int:subject_id>")
+def delete_subject(subject_id):
+
+    if not login_required():
+        return redirect(url_for("login"))
+
+    connection = None
+    cursor = None
+
+    try:
+
+        connection = get_connection()
+        cursor = connection.cursor()
+
+        # Delete related records first
+        cursor.execute(
+            "DELETE FROM marks WHERE subject_id = %s",
+            (subject_id,)
+        )
+
+        cursor.execute(
+            "DELETE FROM attendance WHERE subject_id = %s",
+            (subject_id,)
+        )
+
+        cursor.execute(
+            "DELETE FROM subjects WHERE subject_id = %s",
             (subject_id,)
         )
 
         connection.commit()
 
-        if cursor.rowcount == 0:
-            print("Subject not found.")
-        else:
-            print("Subject deleted successfully.")
+        return redirect(url_for("subjects"))
 
-    except Error as error:
+    except mysql.connector.Error as error:
+
         connection.rollback()
-        print(f"Could not delete subject: {error}")
+
+        return f"Database error: {error}"
 
     finally:
-        if cursor is not None:
+
+        if cursor:
             cursor.close()
 
+        if connection:
+            connection.close()
 
-def add_marks(connection):
-    student_id = get_student_id()
 
-    if student_id is None:
-        return
+# ============================================================
+# MARKS
+# ============================================================
 
-    subject_id = get_subject_id()
+@app.route("/marks")
+def marks():
 
-    if subject_id is None:
-        return
+    if not login_required():
+        return redirect(url_for("login"))
 
-    try:
-        marks = int(
-            input("Enter marks (0-100): ").strip()
-        )
-
-    except ValueError:
-        print("Marks must be a whole number.")
-        return
-
-    if marks < 0 or marks > 100:
-        print("Marks must be between 0 and 100.")
-        return
-
-    query = """
-        INSERT INTO marks
-        (student_id, subject_id, marks)
-        VALUES (%s, %s, %s)
-    """
-
-    cursor = None
-
-    try:
-        cursor = connection.cursor()
-
-        cursor.execute(
-            query,
-            (
-                student_id,
-                subject_id,
-                marks
-            )
-        )
-
-        connection.commit()
-
-        print("Marks added successfully.")
-
-    except Error as error:
-        connection.rollback()
-        print(f"Could not add marks: {error}")
-
-    finally:
-        if cursor is not None:
-            cursor.close()
-
-
-def view_student_marks(connection):
-    student_id = get_student_id()
-
-    if student_id is None:
-        return
-
-    query = """
-        SELECT
-            sub.subject_id,
-            sub.subject_name,
-            m.marks
-        FROM marks m
-        JOIN subjects sub
-            ON m.subject_id = sub.subject_id
-        WHERE m.student_id = %s
-        ORDER BY sub.subject_id
-    """
-
-    cursor = None
-
-    try:
-        cursor = connection.cursor()
-
-        cursor.execute(
-            query,
-            (student_id,)
-        )
-
-        results = cursor.fetchall()
-
-        if not results:
-            print("No marks found for this student.")
-            return
-
-        print("\n========== STUDENT MARKS ==========")
-        print(f"Student ID: {student_id}")
-        print("-----------------------------------")
-
-        for result in results:
-            print(
-                f"Subject ID: {result[0]} | "
-                f"{result[1]} | "
-                f"Marks: {result[2]}"
-            )
-
-        print("===================================")
-
-    except Error as error:
-        print(f"Could not retrieve marks: {error}")
-
-    finally:
-        if cursor is not None:
-            cursor.close()
-
-
-def update_marks(connection):
-    student_id = get_student_id()
-
-    if student_id is None:
-        return
-
-    subject_id = get_subject_id()
-
-    if subject_id is None:
-        return
-
-    try:
-        new_marks = int(
-            input("Enter new marks (0-100): ").strip()
-        )
-
-    except ValueError:
-        print("Marks must be a whole number.")
-        return
-
-    if new_marks < 0 or new_marks > 100:
-        print("Marks must be between 0 and 100.")
-        return
-
-    query = """
-        UPDATE marks
-        SET marks = %s
-        WHERE student_id = %s
-        AND subject_id = %s
-    """
-
-    cursor = None
-
-    try:
-        cursor = connection.cursor()
-
-        cursor.execute(
-            query,
-            (
-                new_marks,
-                student_id,
-                subject_id
-            )
-        )
-
-        connection.commit()
-
-        if cursor.rowcount == 0:
-            print("Marks record not found.")
-        else:
-            print("Marks updated successfully.")
-
-    except Error as error:
-        connection.rollback()
-        print(f"Could not update marks: {error}")
-
-    finally:
-        if cursor is not None:
-            cursor.close()
-
-
-def delete_marks(connection):
-    student_id = get_student_id()
-
-    if student_id is None:
-        return
-
-    subject_id = get_subject_id()
-
-    if subject_id is None:
-        return
-
-    confirmation = input(
-        "Are you sure you want to delete these marks? (y/n): "
-    ).strip().lower()
-
-    if confirmation != "y":
-        print("Delete cancelled.")
-        return
-
-    query = """
-        DELETE FROM marks
-        WHERE student_id = %s
-        AND subject_id = %s
-    """
-
-    cursor = None
-
-    try:
-        cursor = connection.cursor()
-
-        cursor.execute(
-            query,
-            (
-                student_id,
-                subject_id
-            )
-        )
-
-        connection.commit()
-
-        if cursor.rowcount == 0:
-            print("Marks record not found.")
-        else:
-            print("Marks deleted successfully.")
-
-    except Error as error:
-        connection.rollback()
-        print(f"Could not delete marks: {error}")
-
-    finally:
-        if cursor is not None:
-            cursor.close()
-
-
-def add_attendance(connection):
-    student_id = get_student_id()
-
-    if student_id is None:
-        return
-
-    subject_id = get_subject_id()
-
-    if subject_id is None:
-        return
-
-    try:
-        total_classes = int(
-            input("Enter total classes: ").strip()
-        )
-
-        attended_classes = int(
-            input("Enter attended classes: ").strip()
-        )
-
-    except ValueError:
-        print("Classes must be whole numbers.")
-        return
-
-    if total_classes <= 0:
-        print("Total classes must be greater than 0.")
-        return
-
-    if attended_classes < 0:
-        print("Attended classes cannot be negative.")
-        return
-
-    if attended_classes > total_classes:
-        print("Attended classes cannot be greater than total classes.")
-        return
-
-    query = """
-        INSERT INTO attendance
-        (student_id, subject_id, total_classes, attended_classes)
-        VALUES (%s, %s, %s, %s)
-    """
-
-    cursor = None
-
-    try:
-        cursor = connection.cursor()
-
-        cursor.execute(
-            query,
-            (
-                student_id,
-                subject_id,
-                total_classes,
-                attended_classes
-            )
-        )
-
-        connection.commit()
-
-        print("Attendance added successfully.")
-
-    except Error as error:
-        connection.rollback()
-        print(f"Could not add attendance: {error}")
-
-    finally:
-        if cursor is not None:
-            cursor.close()
-
-
-def view_student_attendance(connection):
-    student_id = get_student_id()
-
-    if student_id is None:
-        return
-
-    query = """
-        SELECT
-            sub.subject_id,
-            sub.subject_name,
-            a.total_classes,
-            a.attended_classes,
-            (a.attended_classes * 100.0 / a.total_classes)
-        FROM attendance a
-        JOIN subjects sub
-            ON a.subject_id = sub.subject_id
-        WHERE a.student_id = %s
-        ORDER BY sub.subject_id
-    """
-
-    cursor = None
-
-    try:
-        cursor = connection.cursor()
-
-        cursor.execute(
-            query,
-            (student_id,)
-        )
-
-        results = cursor.fetchall()
-
-        if not results:
-            print("No attendance found for this student.")
-            return
-
-        print("\n========== STUDENT ATTENDANCE ==========")
-        print(f"Student ID: {student_id}")
-        print("----------------------------------------")
-
-        for result in results:
-            print(
-                f"Subject ID: {result[0]} | "
-                f"{result[1]} | "
-                f"Total: {result[2]} | "
-                f"Attended: {result[3]} | "
-                f"Percentage: {result[4]:.2f}%"
-            )
-
-        print("========================================")
-
-    except Error as error:
-        print(f"Could not retrieve attendance: {error}")
-
-    finally:
-        if cursor is not None:
-            cursor.close()
-
-
-def update_attendance(connection):
-    student_id = get_student_id()
-
-    if student_id is None:
-        return
-
-    subject_id = get_subject_id()
-
-    if subject_id is None:
-        return
-
-    try:
-        total_classes = int(
-            input("Enter new total classes: ").strip()
-        )
-
-        attended_classes = int(
-            input("Enter new attended classes: ").strip()
-        )
-
-    except ValueError:
-        print("Classes must be whole numbers.")
-        return
-
-    if total_classes <= 0:
-        print("Total classes must be greater than 0.")
-        return
-
-    if attended_classes < 0:
-        print("Attended classes cannot be negative.")
-        return
-
-    if attended_classes > total_classes:
-        print("Attended classes cannot be greater than total classes.")
-        return
-
-    query = """
-        UPDATE attendance
-        SET total_classes = %s,
-            attended_classes = %s
-        WHERE student_id = %s
-        AND subject_id = %s
-    """
-
-    cursor = None
-
-    try:
-        cursor = connection.cursor()
-
-        cursor.execute(
-            query,
-            (
-                total_classes,
-                attended_classes,
-                student_id,
-                subject_id
-            )
-        )
-
-        connection.commit()
-
-        if cursor.rowcount == 0:
-            print("Attendance record not found.")
-        else:
-            print("Attendance updated successfully.")
-
-    except Error as error:
-        connection.rollback()
-        print(f"Could not update attendance: {error}")
-
-    finally:
-        if cursor is not None:
-            cursor.close()
-
-
-def delete_attendance(connection):
-    student_id = get_student_id()
-
-    if student_id is None:
-        return
-
-    subject_id = get_subject_id()
-
-    if subject_id is None:
-        return
-
-    confirmation = input(
-        "Are you sure you want to delete this attendance? (y/n): "
-    ).strip().lower()
-
-    if confirmation != "y":
-        print("Delete cancelled.")
-        return
-
-    query = """
-        DELETE FROM attendance
-        WHERE student_id = %s
-        AND subject_id = %s
-    """
-
-    cursor = None
-
-    try:
-        cursor = connection.cursor()
-
-        cursor.execute(
-            query,
-            (
-                student_id,
-                subject_id
-            )
-        )
-
-        connection.commit()
-
-        if cursor.rowcount == 0:
-            print("Attendance record not found.")
-        else:
-            print("Attendance deleted successfully.")
-
-    except Error as error:
-        connection.rollback()
-        print(f"Could not delete attendance: {error}")
-
-    finally:
-        if cursor is not None:
-            cursor.close()
-
-
-def view_result(connection):
-    student_id = get_student_id()
-
-    if student_id is None:
-        return
-
-    marks_query = """
-        SELECT
-            s.name,
-            sub.subject_id,
-            sub.subject_name,
-            m.marks
-        FROM marks m
-        JOIN students s
-            ON m.student_id = s.student_id
-        JOIN subjects sub
-            ON m.subject_id = sub.subject_id
-        WHERE s.student_id = %s
-        ORDER BY sub.subject_id
-    """
-
-    attendance_query = """
-        SELECT
-            sub.subject_id,
-            sub.subject_name,
-            a.total_classes,
-            a.attended_classes,
-            (a.attended_classes * 100.0 / a.total_classes)
-        FROM attendance a
-        JOIN subjects sub
-            ON a.subject_id = sub.subject_id
-        WHERE a.student_id = %s
-        ORDER BY sub.subject_id
-    """
-
-    cursor = None
-
-    try:
-        cursor = connection.cursor()
-
-        cursor.execute(
-            marks_query,
-            (student_id,)
-        )
-
-        marks_results = cursor.fetchall()
-
-        if not marks_results:
-            print("No marks found for this student.")
-            return
-
-        student_name = marks_results[0][0]
-
-        total = sum(
-            result[3]
-            for result in marks_results
-        )
-
-        subject_count = len(marks_results)
-
-        average = total / subject_count
-        percentage = average
-
-        if percentage >= 90:
-            grade = "A+"
-        elif percentage >= 80:
-            grade = "A"
-        elif percentage >= 70:
-            grade = "B"
-        elif percentage >= 60:
-            grade = "C"
-        elif percentage >= 50:
-            grade = "D"
-        else:
-            grade = "F"
-
-        if all(
-            result[3] >= 40
-            for result in marks_results
-        ):
-            status = "PASS"
-        else:
-            status = "FAIL"
-
-        cursor.execute(
-            attendance_query,
-            (student_id,)
-        )
-
-        attendance_results = cursor.fetchall()
-
-        print("\n========== STUDENT RESULT ==========")
-        print(f"Student ID : {student_id}")
-        print(f"Name       : {student_name}")
-
-        print("------------------------------------")
-        print("MARKS")
-        print("------------------------------------")
-
-        for result in marks_results:
-            print(
-                f"{result[2]} : {result[3]}"
-            )
-
-        print("------------------------------------")
-        print(f"Total      : {total}")
-        print(f"Subjects   : {subject_count}")
-        print(f"Average    : {average:.2f}")
-        print(f"Percentage : {percentage:.2f}%")
-        print(f"Grade      : {grade}")
-        print(f"Status     : {status}")
-
-        print("------------------------------------")
-        print("ATTENDANCE")
-        print("------------------------------------")
-
-        if attendance_results:
-            for result in attendance_results:
-                print(
-                    f"{result[1]} : "
-                    f"{result[3]}/{result[2]} "
-                    f"({result[4]:.2f}%)"
-                )
-        else:
-            print("No attendance records found.")
-
-        print("====================================")
-
-    except Error as error:
-        print(f"Could not calculate result: {error}")
-
-    finally:
-        if cursor is not None:
-            cursor.close()
-
-
-def show_menu():
-    print("\n===== Student Result Management System =====")
-    print("1. Add student")
-    print("2. View all students")
-    print("3. Search student by ID")
-    print("4. Update student")
-    print("5. Delete student")
-    print("6. Add subject")
-    print("7. View all subjects")
-    print("8. Update subject")
-    print("9. Delete subject")
-    print("10. Add marks")
-    print("11. View student marks")
-    print("12. Update marks")
-    print("13. Delete marks")
-    print("14. Add attendance")
-    print("15. View student attendance")
-    print("16. Update attendance")
-    print("17. Delete attendance")
-    print("18. View result")
-    print("19. Exit")
-
-
-def main():
     connection = None
+    cursor = None
 
     try:
-        connection = mysql.connector.connect(**DB_CONFIG)
 
-        if not connection.is_connected():
-            print("Could not connect to MySQL.")
-            return
+        connection = get_connection()
+        cursor = connection.cursor(dictionary=True)
 
-        print("Connected to the student database.")
+        cursor.execute(
+            """
+            SELECT
+                marks.mark_id,
+                students.student_id,
+                students.name AS student_name,
+                subjects.subject_id,
+                subjects.subject_name,
+                marks.marks
+            FROM marks
+            INNER JOIN students
+                ON marks.student_id = students.student_id
+            INNER JOIN subjects
+                ON marks.subject_id = subjects.subject_id
+            ORDER BY marks.mark_id
+            """
+        )
 
-        while True:
-            if admin_login(connection):
-                break
+        mark_list = cursor.fetchall()
 
-            retry = input(
-                "Do you want to try again? (y/n): "
-            ).strip().lower()
+        return render_template(
+            "marks.html",
+            marks=mark_list
+        )
 
-            if retry != "y":
-                print("Goodbye.")
-                return
+    except mysql.connector.Error as error:
 
-        while True:
-            show_menu()
+        return f"Database error: {error}"
 
-            choice = input(
-                "Enter your choice (1-19): "
-            ).strip()
+    finally:
 
-            if choice == "1":
-                add_student(connection)
+        if cursor:
+            cursor.close()
 
-            elif choice == "2":
-                view_all_students(connection)
+        if connection:
+            connection.close()
 
-            elif choice == "3":
-                search_student(connection)
 
-            elif choice == "4":
-                update_student(connection)
+# -------------------------
+# ADD MARKS
+# -------------------------
 
-            elif choice == "5":
-                delete_student(connection)
+@app.route("/marks/add", methods=["GET", "POST"])
+def add_marks():
 
-            elif choice == "6":
-                add_subject(connection)
+    if not login_required():
+        return redirect(url_for("login"))
 
-            elif choice == "7":
-                view_all_subjects(connection)
+    connection = None
+    cursor = None
 
-            elif choice == "8":
-                update_subject(connection)
+    try:
 
-            elif choice == "9":
-                delete_subject(connection)
+        connection = get_connection()
+        cursor = connection.cursor(dictionary=True)
 
-            elif choice == "10":
-                add_marks(connection)
+        if request.method == "POST":
 
-            elif choice == "11":
-                view_student_marks(connection)
+            student_id = request.form["student_id"]
+            subject_id = request.form["subject_id"]
+            mark = request.form["marks"]
 
-            elif choice == "12":
-                update_marks(connection)
+            cursor.execute(
+                """
+                SELECT mark_id
+                FROM marks
+                WHERE student_id = %s
+                AND subject_id = %s
+                """,
+                (
+                    student_id,
+                    subject_id
+                )
+            )
 
-            elif choice == "13":
-                delete_marks(connection)
+            existing = cursor.fetchone()
 
-            elif choice == "14":
-                add_attendance(connection)
+            if existing:
 
-            elif choice == "15":
-                view_student_attendance(connection)
-
-            elif choice == "16":
-                update_attendance(connection)
-
-            elif choice == "17":
-                delete_attendance(connection)
-
-            elif choice == "18":
-                view_result(connection)
-
-            elif choice == "19":
-                print("bye.")
-                break
+                cursor.execute(
+                    """
+                    UPDATE marks
+                    SET marks = %s
+                    WHERE student_id = %s
+                    AND subject_id = %s
+                    """,
+                    (
+                        mark,
+                        student_id,
+                        subject_id
+                    )
+                )
 
             else:
-                print(
-                    "Invalid choice. "
-                    "Please enter a number from 1 to 19."
+
+                cursor.execute(
+                    """
+                    INSERT INTO marks
+                    (student_id, subject_id, marks)
+                    VALUES (%s, %s, %s)
+                    """,
+                    (
+                        student_id,
+                        subject_id,
+                        mark
+                    )
                 )
 
-    except Error as error:
-        print(f"Database connection error: {error}")
+            connection.commit()
+
+            return redirect(url_for("marks"))
+
+        cursor.execute(
+            """
+            SELECT student_id, name
+            FROM students
+            ORDER BY name
+            """
+        )
+
+        student_list = cursor.fetchall()
+
+        cursor.execute(
+            """
+            SELECT subject_id, subject_name
+            FROM subjects
+            ORDER BY subject_name
+            """
+        )
+
+        subject_list = cursor.fetchall()
+
+        return render_template(
+            "add_marks.html",
+            students=student_list,
+            subjects=subject_list
+        )
+
+    except mysql.connector.Error as error:
+
+        return f"Database error: {error}"
 
     finally:
-        if connection is not None and connection.is_connected():
-            connection.close()
-            print("Database connection closed.")
 
+        if cursor:
+            cursor.close()
+
+        if connection:
+            connection.close()
+
+
+# -------------------------
+# DELETE MARK
+# -------------------------
+
+@app.route("/marks/delete/<int:mark_id>")
+def delete_mark(mark_id):
+
+    if not login_required():
+        return redirect(url_for("login"))
+
+    connection = None
+    cursor = None
+
+    try:
+
+        connection = get_connection()
+        cursor = connection.cursor()
+
+        cursor.execute(
+            "DELETE FROM marks WHERE mark_id = %s",
+            (mark_id,)
+        )
+
+        connection.commit()
+
+        return redirect(url_for("marks"))
+
+    except mysql.connector.Error as error:
+
+        return f"Database error: {error}"
+
+    finally:
+
+        if cursor:
+            cursor.close()
+
+        if connection:
+            connection.close()
+
+
+# ============================================================
+# ATTENDANCE
+# ============================================================
+
+@app.route("/attendance")
+def attendance():
+
+    if not login_required():
+        return redirect(url_for("login"))
+
+    connection = None
+    cursor = None
+
+    try:
+
+        connection = get_connection()
+        cursor = connection.cursor(dictionary=True)
+
+        cursor.execute(
+            """
+            SELECT
+                attendance.attendance_id,
+                students.name AS student_name,
+                subjects.subject_name,
+                attendance.total_classes,
+                attendance.attended_classes
+            FROM attendance
+            INNER JOIN students
+                ON attendance.student_id = students.student_id
+            INNER JOIN subjects
+                ON attendance.subject_id = subjects.subject_id
+            ORDER BY attendance.attendance_id
+            """
+        )
+
+        attendance_list = cursor.fetchall()
+
+        for record in attendance_list:
+
+            if record["total_classes"] > 0:
+
+                record["percentage"] = round(
+                    (
+                        record["attended_classes"]
+                        / record["total_classes"]
+                    ) * 100,
+                    2
+                )
+
+            else:
+
+                record["percentage"] = 0
+
+        return render_template(
+            "attendance.html",
+            attendance=attendance_list
+        )
+
+    except mysql.connector.Error as error:
+
+        return f"Database error: {error}"
+
+    finally:
+
+        if cursor:
+            cursor.close()
+
+        if connection:
+            connection.close()
+
+
+# -------------------------
+# ADD / UPDATE ATTENDANCE
+# -------------------------
+
+@app.route("/attendance/add", methods=["GET", "POST"])
+def add_attendance():
+
+    if not login_required():
+        return redirect(url_for("login"))
+
+    connection = None
+    cursor = None
+
+    try:
+
+        connection = get_connection()
+        cursor = connection.cursor(dictionary=True)
+
+        if request.method == "POST":
+
+            student_id = request.form["student_id"]
+            subject_id = request.form["subject_id"]
+            total_classes = request.form["total_classes"]
+            attended_classes = request.form["attended_classes"]
+
+            cursor.execute(
+                """
+                SELECT attendance_id
+                FROM attendance
+                WHERE student_id = %s
+                AND subject_id = %s
+                """,
+                (
+                    student_id,
+                    subject_id
+                )
+            )
+
+            existing = cursor.fetchone()
+
+            if existing:
+
+                cursor.execute(
+                    """
+                    UPDATE attendance
+                    SET total_classes = %s,
+                        attended_classes = %s
+                    WHERE student_id = %s
+                    AND subject_id = %s
+                    """,
+                    (
+                        total_classes,
+                        attended_classes,
+                        student_id,
+                        subject_id
+                    )
+                )
+
+            else:
+
+                cursor.execute(
+                    """
+                    INSERT INTO attendance
+                    (
+                        student_id,
+                        subject_id,
+                        total_classes,
+                        attended_classes
+                    )
+                    VALUES (%s, %s, %s, %s)
+                    """,
+                    (
+                        student_id,
+                        subject_id,
+                        total_classes,
+                        attended_classes
+                    )
+                )
+
+            connection.commit()
+
+            return redirect(url_for("attendance"))
+
+        cursor.execute(
+            """
+            SELECT student_id, name
+            FROM students
+            ORDER BY name
+            """
+        )
+
+        student_list = cursor.fetchall()
+
+        cursor.execute(
+            """
+            SELECT subject_id, subject_name
+            FROM subjects
+            ORDER BY subject_name
+            """
+        )
+
+        subject_list = cursor.fetchall()
+
+        return render_template(
+            "add_attendance.html",
+            students=student_list,
+            subjects=subject_list
+        )
+
+    except mysql.connector.Error as error:
+
+        return f"Database error: {error}"
+
+    finally:
+
+        if cursor:
+            cursor.close()
+
+        if connection:
+            connection.close()
+
+
+# -------------------------
+# DELETE ATTENDANCE
+# -------------------------
+
+@app.route("/attendance/delete/<int:attendance_id>")
+def delete_attendance(attendance_id):
+
+    if not login_required():
+        return redirect(url_for("login"))
+
+    connection = None
+    cursor = None
+
+    try:
+
+        connection = get_connection()
+        cursor = connection.cursor()
+
+        cursor.execute(
+            """
+            DELETE FROM attendance
+            WHERE attendance_id = %s
+            """,
+            (attendance_id,)
+        )
+
+        connection.commit()
+
+        return redirect(url_for("attendance"))
+
+    except mysql.connector.Error as error:
+
+        return f"Database error: {error}"
+
+    finally:
+
+        if cursor:
+            cursor.close()
+
+        if connection:
+            connection.close()
+
+
+# ============================================================
+# RESULTS
+# ============================================================
+
+@app.route("/results")
+def results():
+
+    if not login_required():
+        return redirect(url_for("login"))
+
+    connection = None
+    cursor = None
+
+    try:
+
+        connection = get_connection()
+        cursor = connection.cursor(dictionary=True)
+
+        cursor.execute(
+            """
+            SELECT student_id, name
+            FROM students
+            ORDER BY name
+            """
+        )
+
+        student_list = cursor.fetchall()
+
+        selected_student = request.args.get("student_id")
+
+        result = None
+
+        if selected_student:
+
+            cursor.execute(
+                """
+                SELECT
+                    students.student_id,
+                    students.name,
+                    subjects.subject_name,
+                    marks.marks
+                FROM marks
+                INNER JOIN students
+                    ON marks.student_id = students.student_id
+                INNER JOIN subjects
+                    ON marks.subject_id = subjects.subject_id
+                WHERE students.student_id = %s
+                ORDER BY subjects.subject_name
+                """,
+                (selected_student,)
+            )
+
+            mark_list = cursor.fetchall()
+
+            if mark_list:
+
+                total_marks = sum(
+                    item["marks"]
+                    for item in mark_list
+                )
+
+                subject_count = len(mark_list)
+
+                average = total_marks / subject_count
+
+                percentage = average
+
+                if percentage >= 90:
+                    grade = "A+"
+                elif percentage >= 80:
+                    grade = "A"
+                elif percentage >= 70:
+                    grade = "B"
+                elif percentage >= 60:
+                    grade = "C"
+                elif percentage >= 50:
+                    grade = "D"
+                else:
+                    grade = "F"
+
+                passed = all(
+                    item["marks"] >= 40
+                    for item in mark_list
+                )
+
+                result = {
+                    "student_id": mark_list[0]["student_id"],
+                    "student_name": mark_list[0]["name"],
+                    "marks": mark_list,
+                    "total": total_marks,
+                    "average": round(average, 2),
+                    "percentage": round(percentage, 2),
+                    "grade": grade,
+                    "status": "PASS" if passed else "FAIL"
+                }
+
+        return render_template(
+            "results.html",
+            students=student_list,
+            result=result,
+            selected_student=selected_student
+        )
+
+    except mysql.connector.Error as error:
+
+        return f"Database error: {error}"
+
+    finally:
+
+        if cursor:
+            cursor.close()
+
+        if connection:
+            connection.close()
+
+
+# ============================================================
+# LOGOUT
+# ============================================================
+
+@app.route("/logout")
+def logout():
+
+    session.clear()
+
+    return redirect(url_for("login"))
+
+
+# ============================================================
+# RUN APPLICATION
+# ============================================================
 
 if __name__ == "__main__":
-    main()
+    app.run(debug=True)

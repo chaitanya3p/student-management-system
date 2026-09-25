@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+
+{% block title %}
+Add Attendance | SRMS
+{% endblock %}
+
+{% block page_title %}
+Add Attendance
+{% endblock %}
+
+{% block content %}
+
+<div class="form-card">
+
+    <div class="form-header">
+
+        <h2>Add Attendance</h2>
+
+        <p>
+            Add or update student attendance.
+        </p>
+
+    </div>
+
+
+    <form method="POST" class="data-form">
+
+        <div class="form-grid">
+
+            <div class="form-group">
+
+                <label>Student</label>
+
+                <select name="student_id" required>
+
+                    <option value="">
+                        Select Student
+                    </option>
+
+                    {% for student in students %}
+
+                    <option value="{{ student.student_id }}">
+                        {{ student.name }}
+                    </option>
+
+                    {% endfor %}
+
+                </select>
+
+            </div>
+
+
+            <div class="form-group">
+
+                <label>Subject</label>
+
+                <select name="subject_id" required>
+
+                    <option value="">
+                        Select Subject
+                    </option>
+
+                    {% for subject in subjects %}
+
+                    <option value="{{ subject.subject_id }}">
+                        {{ subject.subject_name }}
+                    </option>
+
+                    {% endfor %}
+
+                </select>
+
+            </div>
+
+
+            <div class="form-group">
+
+                <label>Total Classes</label>
+
+                <input
+                    type="number"
+                    name="total_classes"
+                    min="1"
+                    placeholder="Example: 50"
+                    required
+                >
+
+            </div>
+
+
+            <div class="form-group">
+
+                <label>Attended Classes</label>
+
+                <input
+                    type="number"
+                    name="attended_classes"
+                    min="0"
+                    placeholder="Example: 45"
+                    required
+                >
+
+            </div>
+
+        </div>
+
+
+        <div class="form-actions">
+
+            <a
+                href="{{ url_for('attendance') }}"
+                class="secondary-button"
+            >
+                Cancel
+            </a>
+
+            <button type="submit" class="primary-button">
+                Save Attendance
+            </button>
+
+        </div>
+
+    </form>
+
+</div>
+
+{% endblock %}

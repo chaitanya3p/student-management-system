@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+
+{% block title %}
+Results | SRMS
+{% endblock %}
+
+{% block page_title %}
+Results
+{% endblock %}
+
+{% block content %}
+
+<div class="page-header">
+
+    <div>
+        <h2>Student Results</h2>
+        <p>View student academic results.</p>
+    </div>
+
+</div>
+
+
+<div class="result-selector">
+
+    <form method="GET">
+
+        <label>Select Student</label>
+
+        <select name="student_id" required>
+
+            <option value="">
+                Select Student
+            </option>
+
+            {% for student in students %}
+
+            <option
+                value="{{ student.student_id }}"
+                {% if selected_student|string == student.student_id|string %}
+                    selected
+                {% endif %}
+            >
+                {{ student.name }}
+            </option>
+
+            {% endfor %}
+
+        </select>
+
+        <button type="submit" class="primary-button">
+            View Result
+        </button>
+
+    </form>
+
+</div>
+
+
+{% if result %}
+
+<div class="result-card">
+
+    <div class="result-header">
+
+        <div>
+
+            <h2>
+                {{ result.student_name }}
+            </h2>
+
+            <p>
+                Student ID: {{ result.student_id }}
+            </p>
+
+        </div>
+
+        <div class="result-status">
+            {{ result.status }}
+        </div>
+
+    </div>
+
+
+    <div class="result-stats">
+
+        <div>
+            <span>Total Marks</span>
+            <strong>{{ result.total }}</strong>
+        </div>
+
+        <div>
+            <span>Average</span>
+            <strong>{{ result.average }}</strong>
+        </div>
+
+        <div>
+            <span>Percentage</span>
+            <strong>{{ result.percentage }}%</strong>
+        </div>
+
+        <div>
+            <span>Grade</span>
+            <strong>{{ result.grade }}</strong>
+        </div>
+
+    </div>
+
+
+    <div class="table-container">
+
+        <table>
+
+            <thead>
+
+                <tr>
+                    <th>Subject</th>
+                    <th>Marks</th>
+                </tr>
+
+            </thead>
+
+
+            <tbody>
+
+                {% for item in result.marks %}
+
+                <tr>
+
+                    <td>
+                        {{ item.subject_name }}
+                    </td>
+
+                    <td>
+                        {{ item.marks }}/100
+                    </td>
+
+                </tr>
+
+                {% endfor %}
+
+            </tbody>
+
+        </table>
+
+    </div>
+
+</div>
+
+{% elif selected_student %}
+
+<div class="no-result">
+
+    <h3>No marks found</h3>
+
+    <p>
+        This student does not have any marks records yet.
+    </p>
+
+</div>
+
+{% endif %}
+
+{% endblock %}
